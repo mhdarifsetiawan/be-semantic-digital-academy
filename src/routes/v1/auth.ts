@@ -5,11 +5,22 @@ import bcrypt from 'bcrypt';
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
 import { authRateLimiter } from '../../middleware/rateLimiter';
+import crypto from 'crypto';
+import dayjs from 'dayjs';
+// import nodemailer from 'nodemailer'; // kalau kamu pakai email service
 
 const router = Router();
 
-const ACCESS_TOKEN_EXPIRES_IN = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
-const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
+// const ACCESS_TOKEN_EXPIRES_IN = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
+// const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
+
+const ACCESS_TOKEN_DURATION_MS = 1 * 60 * 1000;
+const REFRESH_TOKEN_DURATION_MS = 3 * 60 * 1000;
+const ACCESS_TOKEN_EXPIRES_IN = '1m';
+const REFRESH_TOKEN_EXPIRES_IN = '2m';
+
+const RESET_TOKEN_EXPIRATION_MINUTES = 15;
+
 
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET is not defined in .env');
@@ -73,7 +84,7 @@ router.post('/login', authRateLimiter, async (req, res) => {
     const refreshToken = generateRefreshToken(user.id);
 
     // Simpan refreshToken ke DB
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 hari
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_DURATION_MS);
     await pool.query(
       'INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)',
       [refreshToken, user.id, expiresAt]
@@ -81,17 +92,22 @@ router.post('/login', authRateLimiter, async (req, res) => {
 
     // Kirim token via cookie
     res
-      .cookie('accessToken', accessToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 15 * 60 * 1000, // 15 menit
-      })
-      .cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 hari
-      })
-      .json({ message: 'Login successful' });
+    .cookie('accessToken', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: ACCESS_TOKEN_DURATION_MS,
+      sameSite: 'lax', // ✅ penting untuk browser support
+      path: '/',       // ✅ agar tersedia di semua route
+    })
+    .cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: REFRESH_TOKEN_DURATION_MS,
+      sameSite: 'lax',
+      path: '/',
+    })
+    .json({ message: 'Login successful' });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Internal server error' });
@@ -157,7 +173,7 @@ router.post('/refresh-token', async (req, res) => {
     res.cookie('accessToken', newAccessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 15 * 60 * 1000,
+      maxAge: ACCESS_TOKEN_DURATION_MS
     });
 
     res.json({ message: 'Access token refreshed' });
@@ -184,6 +200,96 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+// 🟡 POST /forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Email wajib diisi' });
+  }
+
+  try {
+    const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const user = userResult.rows[0];
+
+    if (!user) {
+      // Jangan bocorkan bahwa email tidak ditemukan
+      return res.status(200).json({ message: 'Jika email terdaftar, kami akan mengirim link reset password.' });
+    }
+
+    // Buat token random
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = dayjs().add(RESET_TOKEN_EXPIRATION_MINUTES, 'minute').toDate();
+
+    // Simpan token ke tabel
+    await pool.query(
+      `INSERT INTO password_reset_tokens (user_id, token, expires_at)
+      VALUES ($1, $2, $3)`,
+      [user.id, token, expiresAt]
+    );
+
+    // Buat URL reset
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${token}`;
+
+    // Kirim email atau tampilkan URL (saat dev)
+    console.log(`🔗 Reset password link: ${resetUrl}`);
+
+    // Kalau pakai nodemailer, kirim email di sini
+
+    return res.status(200).json({
+      message: 'Jika email terdaftar, kami akan mengirim link reset password.',
+      resetUrl: process.env.NODE_ENV === 'development' ? resetUrl : undefined
+    });
+
+  } catch (err) {
+    console.error('❌ Error di /forgot-password:', err);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+// 🔄 Reset password
+router.post('/reset-password/:token', async (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
+
+  if (!password || password.length < 6) {
+    return res.status(400).json({ message: 'Password minimal 6 karakter' });
+  }
+
+  try {
+    // 1. Cek apakah token valid dan belum kedaluwarsa
+    const result = await pool.query(
+      `SELECT user_id FROM password_reset_tokens WHERE token = $1 AND expires_at > NOW()`,
+      [token]
+    );
+
+    const data = result.rows[0];
+    if (!data) {
+      return res.status(400).json({ message: 'Token tidak valid atau sudah kedaluwarsa' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 2. Update password user
+    await pool.query(
+      `UPDATE users SET password = $1 WHERE id = $2`,
+      [hashedPassword, data.user_id]
+    );
+
+    // 3. Hapus token agar tidak bisa dipakai ulang
+    await pool.query(`DELETE FROM password_reset_tokens WHERE token = $1`, [token]);
+
+    res.json({ message: 'Password berhasil direset' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+  }
+});
+
+
+
 
 
 
