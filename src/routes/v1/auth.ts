@@ -106,7 +106,7 @@ router.post('/login', authRateLimiter, async (req, res) => {
       sameSite: 'lax',
       path: '/',
     })
-    .json({ message: 'Login successful' });
+    .json({ rc: '00', message: 'Login successful' });
 
   } catch (error) {
     console.error(error);
@@ -143,7 +143,7 @@ router.post('/logout', async (req, res) => {
       path: '/',
     })
     .status(200)
-    .json({ message: 'Logged out successfully' });
+    .json({ rc: '00', message: 'Logged out successfully' });
 });
 
 router.post('/refresh-token', async (req, res) => {
@@ -192,7 +192,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
     );
 
     const user = result.rows[0];
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) return res.status(404).json({ rc: '01', message: 'User not found' });
 
     res.json({ user });
   } catch (err) {
