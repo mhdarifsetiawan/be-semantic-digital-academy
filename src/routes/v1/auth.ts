@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { login, register, logout, refreshToken } from '../../controllers/authController';
+
+import { login, logout, refreshToken, register } from '../../controllers/authController';
 import { authRateLimiter } from '../../middleware/rateLimiter';
-import { asyncHandler } from '../../utils/asyncHandler';
 
 const router = Router();
 
