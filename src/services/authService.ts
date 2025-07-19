@@ -1,29 +1,46 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+
 // src/services/authService.ts
-import { pool } from '../db/pools';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { generateAccessToken, generateRefreshToken } from '../utils/token';
+
+import { pool } from '../db/pools';
 import { ApiError } from '../utils/ApiError';
+import logger from '../utils/logger';
+import { generateAccessToken, generateRefreshToken } from '../utils/token';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
 interface RefreshPayload {
-    userId: string;
     type: 'refresh';
+    userId: string;
 }
 
 export async function loginUser(email: string, password: string) {
+    logger.info('Service: Fetching user data from DB...');
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
 
-    if (!user) throw new ApiError('Invalid email or password', 401);
+    if (!user) {
+        logger.info('Service: 401 - Invalid email or password');
+        throw new ApiError('Invalid email or password', 401);
+    }
 
     const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) throw new ApiError('Invalid email or password', 401);
+    if (!isValid) {
+        logger.info('Service: 401 - Invalid email or password');
+        throw new ApiError('Invalid email or password', 401);
+    }
 
     const accessToken = generateAccessToken(user.id);
     const refreshToken = await generateRefreshToken(user.id);
 
+    logger.info('Service: Insert refresh token into DB');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await pool.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [refreshToken, user.id, expiresAt]);
 

@@ -1,44 +1,66 @@
 // src/controllers/authController.ts
 import { Request, Response } from 'express';
-import { loginUser, registerUser, removeRefreshToken, validateRefreshTokenAndGenerateAccess } from '../services/authService';
-import { asyncHandler } from '../utils/asyncHandler';
-import { ApiError } from '../utils/ApiError';
+import ms from 'ms';
 
-export const login = asyncHandler(async (req: Request, res: Response) => {
-    const { email, password } = req.body;
+import { loginUser, registerUser, removeRefreshToken, validateRefreshTokenAndGenerateAccess } from '../services/authService';
+import { ApiError } from '../utils/ApiError';
+import { asyncHandler } from '../utils/asyncHandler';
+import logger from '../utils/logger';
+
+interface LoginRequestBody {
+    email: string;
+    password: string;
+}
+
+export const login = asyncHandler(async (req: Request<object, object, LoginRequestBody>, res: Response) => {
+    const payload = res.locals.payload as LoginRequestBody;
+    const { email, password } = payload;
 
     if (!email || !password) {
+        logger.info('Controller: Missing email or password in request body');
         throw new ApiError('Email and password are required', 400);
     }
 
+    logger.info('Controller: login user started');
     const { accessToken, refreshToken } = await loginUser(email, password);
+
+    const ACCESS_TOKEN_MAX_AGE = process.env.ACCESS_TOKEN_EXPIRES_IN ?? '15m';
+    const REFRESH_TOKEN_MAX_AGE = process.env.REFRESH_TOKEN_EXPIRES_IN ?? '7d';
 
     res.cookie('accessToken', accessToken, {
         httpOnly: true,
+        maxAge: ms(ACCESS_TOKEN_MAX_AGE),
+        sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 15 * 60 * 1000,
     })
         .cookie('refreshToken', refreshToken, {
             httpOnly: true,
+            maxAge: ms(REFRESH_TOKEN_MAX_AGE) as number,
+            sameSite: 'lax',
             secure: process.env.NODE_ENV === 'production',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
         })
         .json({ message: 'Login successful' });
 });
 
-export const register = asyncHandler(async (req: Request, res: Response) => {
-    const { email, password, name } = req.body;
+interface RegisterRequestBody {
+    email: string;
+    name: string;
+    password: string;
+}
+
+export const register = asyncHandler(async (req: Request<object, object, RegisterRequestBody>, res: Response) => {
+    const { email, name, password } = req.body;
 
     if (!email || !password || !name) {
         throw new ApiError('Email, password, and name are required', 400);
     }
 
-    const user = await registerUser(email, password, name);
+    const user = (await registerUser(email, password, name)) as { email: string; id: string; name: string };
     res.status(201).json({ user });
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = (req.cookies as Record<string, string | undefined>).refreshToken;
 
     if (refreshToken) {
         await removeRefreshToken(refreshToken);
@@ -46,23 +68,24 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 
     res.clearCookie('accessToken', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
         path: '/',
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
     })
         .clearCookie('refreshToken', {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
             path: '/',
+            sameSite: 'lax',
+            secure: process.env.NODE_ENV === 'production',
         })
         .status(200)
         .json({ message: 'Logged out successfully' });
 });
 
 export const refreshToken = asyncHandler(async (req: Request, res: Response) => {
-    const token = req.cookies.refreshToken;
+    const token = (req.cookies as Record<string, string | undefined>).refreshToken;
     if (!token) {
+        console.info('Refresh token is missing');
         throw new ApiError('Refresh token is missing', 401);
     }
 
@@ -70,8 +93,8 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
 
     res.cookie('accessToken', newAccessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
         maxAge: 15 * 60 * 1000,
+        secure: process.env.NODE_ENV === 'production',
     });
 
     res.json({ message: 'Access token refreshed' });
