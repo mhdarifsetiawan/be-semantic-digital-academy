@@ -2,6 +2,8 @@
 
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 
@@ -11,6 +13,10 @@ import asyncLocalStorage from './requestContext';
 dotenv.config();
 
 const logToFile = process.env.LOG_TO_FILE === 'true';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const logPath = path.join(__dirname, '../../logs');
 
 // Ambil dari AsyncLocalStorage

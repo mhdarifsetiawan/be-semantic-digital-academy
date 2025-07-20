@@ -29,7 +29,7 @@ export const login = asyncHandler(async (req: Request<object, object, LoginReque
 
     res.cookie('accessToken', accessToken, {
         httpOnly: true,
-        maxAge: ms(ACCESS_TOKEN_MAX_AGE),
+        maxAge: ms(ACCESS_TOKEN_MAX_AGE) as number,
         sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
     })
@@ -91,9 +91,11 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
 
     const newAccessToken = await validateRefreshTokenAndGenerateAccess(token);
 
+    const ACCESS_TOKEN_MAX_AGE = process.env.ACCESS_TOKEN_EXPIRES_IN ?? '15m';
+
     res.cookie('accessToken', newAccessToken, {
         httpOnly: true,
-        maxAge: 15 * 60 * 1000,
+        maxAge: ms(ACCESS_TOKEN_MAX_AGE) as number,
         secure: process.env.NODE_ENV === 'production',
     });
 

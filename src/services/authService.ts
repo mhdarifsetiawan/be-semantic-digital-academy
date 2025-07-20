@@ -1,13 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-
 // src/services/authService.ts
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import ms from 'ms';
 
 import { pool } from '../db/pools';
 import { ApiError } from '../utils/ApiError';
@@ -40,8 +34,11 @@ export async function loginUser(email: string, password: string) {
     const accessToken = generateAccessToken(user.id);
     const refreshToken = await generateRefreshToken(user.id);
 
+    const refreshExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN ?? '7d';
+    const durationMs = ms(refreshExpiresIn) as number;
+
     logger.info('Service: Insert refresh token into DB');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + durationMs);
     await pool.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [refreshToken, user.id, expiresAt]);
 
     return { accessToken, refreshToken };
